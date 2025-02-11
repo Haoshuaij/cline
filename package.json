@@ -208,7 +208,8 @@
 		"publish:marketplace:prerelease": "vsce publish --pre-release && ovsx publish --pre-release",
 		"prepare": "husky",
 		"changeset": "changeset",
-		"version-packages": "changeset version"
+		"version-packages": "changeset version",
+		"vsce-package": "vsce package"
 	},
 	"devDependencies": {
 		"@changesets/cli": "^2.27.12",

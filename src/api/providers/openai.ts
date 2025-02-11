@@ -30,49 +30,67 @@ export class OpenAiHandler implements ApiHandler {
 
 	@withRetry()
 	async *createMessage(systemPrompt: string, messages: Anthropic.Messages.MessageParam[]): ApiStream {
-		const modelId = this.options.openAiModelId ?? ""
-		const isDeepseekReasoner = modelId.includes("deepseek-reasoner")
 
-		let openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-			{ role: "system", content: systemPrompt },
-			...convertToOpenAiMessages(messages),
-		]
+		if (["o1","o1-2024-12-17", "o1-mini", "o1-preview","o1-preview-2024-09-12","o1-mini-2024-09-12"].includes(this.getModel().id)) {
+			const response = await this.client.chat.completions.create({
+				model: this.getModel().id,
+				messages: [{ role: "user", content: systemPrompt }, ...convertToOpenAiMessages(messages)],
+			})
+			yield {
+				type: "text",
+				text: response.choices[0]?.message.content || "",
+			}
+			yield {
+				type: "usage",
+				inputTokens: response.usage?.prompt_tokens || 0,
+				outputTokens: response.usage?.completion_tokens || 0,
+			}
+		}else{
+			const modelId = this.options.openAiModelId ?? ""
+			const isDeepseekReasoner = modelId.includes("deepseek-reasoner")
 
-		if (isDeepseekReasoner) {
-			openAiMessages = convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
+			let openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+				{ role: "system", content: systemPrompt },
+				...convertToOpenAiMessages(messages),
+			]
+
+			if (isDeepseekReasoner) {
+				openAiMessages = convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
+			}
+
+			const stream = await this.client.chat.completions.create({
+				model: modelId,
+				messages: openAiMessages,
+				temperature: 0,
+				stream: true,
+				stream_options: { include_usage: true },
+			})
+			for await (const chunk of stream) {
+				const delta = chunk.choices[0]?.delta
+				if (delta?.content) {
+					yield {
+						type: "text",
+						text: delta.content,
+					}
+				}
+
+				if (delta && "reasoning_content" in delta && delta.reasoning_content) {
+					yield {
+						type: "reasoning",
+						reasoning: (delta.reasoning_content as string | undefined) || "",
+					}
+				}
+
+				if (chunk.usage) {
+					yield {
+						type: "usage",
+						inputTokens: chunk.usage.prompt_tokens || 0,
+						outputTokens: chunk.usage.completion_tokens || 0,
+					}
+				}
+			}
 		}
 
-		const stream = await this.client.chat.completions.create({
-			model: modelId,
-			messages: openAiMessages,
-			temperature: 0,
-			stream: true,
-			stream_options: { include_usage: true },
-		})
-		for await (const chunk of stream) {
-			const delta = chunk.choices[0]?.delta
-			if (delta?.content) {
-				yield {
-					type: "text",
-					text: delta.content,
-				}
-			}
-
-			if (delta && "reasoning_content" in delta && delta.reasoning_content) {
-				yield {
-					type: "reasoning",
-					reasoning: (delta.reasoning_content as string | undefined) || "",
-				}
-			}
-
-			if (chunk.usage) {
-				yield {
-					type: "usage",
-					inputTokens: chunk.usage.prompt_tokens || 0,
-					outputTokens: chunk.usage.completion_tokens || 0,
-				}
-			}
-		}
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
